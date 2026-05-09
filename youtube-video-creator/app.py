@@ -236,6 +236,30 @@ topic = st.text_area(
     height=100,
 )
 
+# ── Reference image upload ─────────────────────────────────────────────────────
+
+with st.expander("📷 Upload a Reference Image (optional)", expanded=False):
+    st.markdown(
+        "Upload an image and Gemini will analyse it to inspire the script topic, "
+        "scene descriptions, and visual style. Great for product videos, travel content, "
+        "or when you have a specific visual in mind."
+    )
+    uploaded_image = st.file_uploader(
+        "Reference Image",
+        type=["jpg", "jpeg", "png", "webp"],
+        label_visibility="collapsed",
+    )
+    if uploaded_image is not None:
+        col_img, col_hint = st.columns([1, 2])
+        with col_img:
+            st.image(uploaded_image, use_container_width=True)
+        with col_hint:
+            st.success("Image uploaded — Gemini will use this to shape the script.")
+            st.caption(
+                "The topic field above can be left blank or used to give additional context "
+                "(e.g. 'make it funny' or 'focus on the architecture')."
+            )
+
 col1, col2, col3 = st.columns([2, 2, 3])
 with col1:
     gen_script_btn = st.button("📝 Generate Script", type="primary", use_container_width=True)
@@ -251,12 +275,28 @@ with col2:
 # ─── Generate Script ──────────────────────────────────────────────────────────
 
 if gen_script_btn:
-    if not topic.strip():
-        st.error("Please enter a video topic.")
+    has_image = uploaded_image is not None
+    if not topic.strip() and not has_image:
+        st.error("Please enter a video topic or upload a reference image.")
     elif not google_api_key:
         st.error("Please enter your Google AI API key in the sidebar.")
     else:
-        with st.spinner("Generating script with Gemini..."):
+        # Read image bytes if provided
+        ref_image_bytes = None
+        ref_image_mime = "image/jpeg"
+        if has_image:
+            uploaded_image.seek(0)
+            ref_image_bytes = uploaded_image.read()
+            mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+            ext = uploaded_image.name.rsplit(".", 1)[-1].lower()
+            ref_image_mime = mime_map.get(ext, "image/jpeg")
+
+        spinner_msg = (
+            "Analysing image and generating script with Gemini..."
+            if has_image
+            else "Generating script with Gemini..."
+        )
+        with st.spinner(spinner_msg):
             try:
                 script = generate_script(
                     google_api_key=google_api_key,
@@ -265,6 +305,8 @@ if gen_script_btn:
                     target_length_seconds=target_length,
                     image_count=custom_image_count,
                     target_audience=target_audience,
+                    reference_image_bytes=ref_image_bytes,
+                    reference_image_mime=ref_image_mime,
                 )
                 st.session_state.script = script
                 st.session_state.segments = script["segments"]

@@ -2,6 +2,7 @@
 
 import json
 import re
+import base64
 from typing import Optional
 from google import genai
 from google.genai import types
@@ -15,10 +16,19 @@ def _build_prompt(
     target_length_seconds: int,
     image_count: Optional[int],
     target_audience: str,
+    has_reference_image: bool = False,
 ) -> str:
     # Estimate word count: ~150 words per minute of narration
     target_words = int((target_length_seconds / 60) * 150)
     auto_images = image_count or max(3, target_length_seconds // 5)
+
+    image_instruction = ""
+    if has_reference_image:
+        image_instruction = (
+            "\nREFERENCE IMAGE: An image has been provided. Analyse it carefully — "
+            "use its subject, setting, mood, colors, and content to inspire the script topic, "
+            "scene descriptions, and visual style. The video should feel directly connected to this image.\n"
+        )
 
     return f"""You are a professional YouTube video scriptwriter. Create a complete, engaging script for a {theme_label}-style video.
 
@@ -26,7 +36,7 @@ TOPIC: {topic}
 TARGET AUDIENCE: {target_audience}
 TOTAL VIDEO LENGTH: {target_length_seconds} seconds (~{target_words} words of narration)
 NUMBER OF VISUAL SEGMENTS: {auto_images}
-SCRIPT TONE: {theme_tone}
+SCRIPT TONE: {theme_tone}{image_instruction}
 
 Your task:
 1. Write a compelling, natural-sounding narration script split into exactly {auto_images} segments
@@ -68,16 +78,22 @@ def generate_script(
     target_length_seconds: int,
     image_count: Optional[int],
     target_audience: str = "general audience",
+    reference_image_bytes: Optional[bytes] = None,
+    reference_image_mime: str = "image/jpeg",
 ) -> dict:
     """
     Generate a structured video script using Gemini.
+
+    Optionally accepts reference_image_bytes — raw image bytes that Gemini will
+    analyse to inspire the script topic and scene descriptions.
 
     Returns a dict with keys: title, description, tags, total_estimated_duration, segments.
     Each segment has: index, narration, scene_description, estimated_duration, caption.
     """
     client = genai.Client(api_key=google_api_key)
 
-    prompt = _build_prompt(
+    has_ref = reference_image_bytes is not None
+    prompt_text = _build_prompt(
         topic=topic,
         theme_label=theme["label"],
         theme_tone=theme["script_tone"],
@@ -85,11 +101,24 @@ def generate_script(
         target_length_seconds=target_length_seconds,
         image_count=image_count,
         target_audience=target_audience,
+        has_reference_image=has_ref,
     )
+
+    if has_ref:
+        # Send image + text together so Gemini can analyse the visual content
+        contents = [
+            types.Part.from_bytes(
+                data=reference_image_bytes,
+                mime_type=reference_image_mime,
+            ),
+            types.Part.from_text(text=prompt_text),
+        ]
+    else:
+        contents = prompt_text
 
     response = client.models.generate_content(
         model="gemini-2.0-flash",
-        contents=prompt,
+        contents=contents,
         config=types.GenerateContentConfig(
             temperature=0.8,
             max_output_tokens=8192,
